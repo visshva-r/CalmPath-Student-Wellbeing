@@ -1,15 +1,37 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { CheckInSchema, defaultResources, scoreCheckIn } from "@/lib/checkin";
+import { useEffect, useRef, useState } from "react";
+import { FollowUpChecklist } from "@/components/FollowUpChecklist";
+import { PlanBadge } from "@/components/PlanBadge";
+import { SeverityDelta } from "@/components/SeverityDelta";
+import { ButtonLink } from "@/components/ui/Button";
+import { Card, PageShell } from "@/components/ui/Card";
+import { ScoreMeter, SeverityChip } from "@/components/ui/SeverityChip";
+import { checkInStreak } from "@/lib/analytics";
+import { scoreCheckIn } from "@/lib/checkin";
+import { PROMPT_VERSION } from "@/lib/constants";
+import {
+  readLocalHistory,
+  saveCloudCheckIn,
+  saveLocalHistoryItem,
+  type HistoryItem,
+  type PlanSource,
+} from "@/lib/history";
 import { PlanSchema, type Plan } from "@/lib/planSchema";
-
-const STORAGE_KEY = "calmpath:lastCheckin";
-const HISTORY_KEY = "calmpath:history";
+import { fallbackPlan } from "@/lib/safetyPlan";
+import { loadCheckInSession } from "@/lib/sessionCheckin";
+import { firebaseEnabled } from "@/lib/firebase/auth";
 
 type ApiResponse =
-  | { plan: Plan; severity: string; score: number }
-  | { error: string; raw?: string };
+  | {
+      plan: Plan;
+      severity: string;
+      score: number;
+      source?: PlanSource;
+      promptVersion?: string;
+      cached?: boolean;
+    }
+  | { error: string };
 
 export default function ResultsPage() {
   const [loading, setLoading] = useState(true);
@@ -17,44 +39,45 @@ export default function ResultsPage() {
   const [error, setError] = useState<string | null>(null);
   const [severity, setSeverity] = useState<string>("unknown");
   const [score, setScore] = useState<number>(0);
-  const [checkin, setCheckin] = useState<unknown>(null);
-
-  useEffect(() => {
-    try {
-      const raw =
-        typeof window !== "undefined"
-          ? window.sessionStorage.getItem(STORAGE_KEY)
-          : null;
-      if (!raw) {
-        setCheckin(null);
-        return;
-      }
-      setCheckin(JSON.parse(raw));
-    } catch {
-      setCheckin(null);
-    }
-  }, []);
+  const [reasons, setReasons] = useState<string[]>([]);
+  const [source, setSource] = useState<PlanSource | "unknown">("unknown");
+  const [cloudSaved, setCloudSaved] = useState<"pending" | "saved" | "local" | "skipped">(
+    "pending",
+  );
+  const [cached, setCached] = useState(false);
+  const [checkinId, setCheckinId] = useState<string | null>(null);
+  const [previous, setPrevious] = useState<HistoryItem | null>(null);
+  const [streak, setStreak] = useState(0);
+  const savedRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     async function run() {
-      const parsed = CheckInSchema.safeParse(checkin);
-      if (!parsed.success) {
+      const session = loadCheckInSession();
+      if (!session) {
         setError("Missing check-in. Please complete the check-in first.");
         setLoading(false);
+        setCloudSaved("skipped");
         return;
       }
-      const computed = scoreCheckIn(parsed.data);
+
+      const computed = scoreCheckIn(session.checkin);
       setSeverity(computed.severity);
       setScore(computed.score);
-
+      setReasons(computed.reasons);
       setLoading(true);
       setError(null);
+
+      let nextSource: PlanSource = "fallback";
+      let nextPlan: Plan = fallbackPlan();
+      let nextSeverity: string = computed.severity;
+      let nextScore = computed.score;
+
       try {
         const res = await fetch("/api/generate-plan", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(parsed.data),
+          body: JSON.stringify(session.checkin),
         });
         const json = (await res.json()) as ApiResponse;
         if ("error" in json) {
@@ -62,210 +85,227 @@ export default function ResultsPage() {
         }
         const validated = PlanSchema.safeParse(json.plan);
         if (!validated.success) throw new Error("Invalid plan returned.");
-
-        if (cancelled) return;
-        setPlan(validated.data);
-        saveHistory({
-          createdAt: new Date().toISOString(),
-          severity: json.severity,
-          score: json.score,
-        });
+        nextPlan = validated.data;
+        nextSource = json.source ?? "gemini";
+        nextSeverity = json.severity;
+        nextScore = json.score;
+        if (json.cached) setCached(true);
       } catch (e) {
-        if (cancelled) return;
-        setPlan({
-          severityReasoning:
-            "We couldn’t generate a Gemini plan right now, so here’s a safe fallback plan.",
-          immediateActions: [
-            "Take 10 slow breaths (4 in, 6 out).",
-            "Write down the next smallest task (2 minutes).",
-            "Message one trusted person for support.",
-          ],
-          dailyHabits: [
-            "Sleep: pick a fixed wake time for 3 days.",
-            "One 20-minute focus block + break.",
-            "Move your body for 10 minutes.",
-          ],
-          weeklyGoal: "Reduce one commitment and protect study time.",
-          followUpChecklist: [
-            "Day 1: Do 1 tiny task (2 minutes).",
-            "Day 2: 20-minute focus block.",
-            "Day 3: Ask for help on one topic.",
-            "Day 4: Clean up your schedule (remove 1 item).",
-            "Day 5: Short walk + hydration.",
-            "Day 6: Review what worked.",
-            "Day 7: Re-check-in.",
-          ],
-          messageScripts: {
-            friend:
-              "Hey — I’m stressed and could use 10 minutes to talk. Are you free today?",
-            mentor:
-              "Hi, I’m feeling overwhelmed and could use guidance. Can we meet briefly this week?",
-          },
-          resources: defaultResources(),
+        nextSource = "fallback";
+        nextPlan = fallbackPlan();
+        if (!cancelled) {
+          setError(
+            e instanceof Error ? e.message : "Failed to generate plan. Try again.",
+          );
+        }
+      }
+
+      if (cancelled) return;
+      setPlan(nextPlan);
+      setSource(nextSource);
+      setSeverity(nextSeverity);
+      setScore(nextScore);
+      setLoading(false);
+
+      if (savedRef.current) return;
+      savedRef.current = true;
+
+      const prior = readLocalHistory();
+      const previousItem = prior.at(-1) ?? null;
+      const historyItem = saveLocalHistoryItem({
+        createdAt: new Date().toISOString(),
+        severity: nextSeverity,
+        score: nextScore,
+        source: nextSource,
+        notesIncluded: session.includeNotesInHistory,
+      });
+      const id = historyItem.id ?? crypto.randomUUID();
+      setPrevious(previousItem);
+      setStreak(checkInStreak([...prior, historyItem]));
+      setCheckinId(id);
+
+      if (!firebaseEnabled()) {
+        setCloudSaved("local");
+        return;
+      }
+
+      try {
+        await saveCloudCheckIn({
+          severity: nextSeverity,
+          score: nextScore,
+          source: nextSource,
+          promptVersion: PROMPT_VERSION,
+          includeNotes: session.includeNotesInHistory,
+          notes: session.includeNotesInHistory ? session.checkin.notes : undefined,
         });
-        setError(
-          e instanceof Error ? e.message : "Failed to generate plan. Try again.",
-        );
-      } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) setCloudSaved("saved");
+      } catch {
+        if (!cancelled) setCloudSaved("local");
       }
     }
     void run();
     return () => {
       cancelled = true;
     };
-  }, [checkin]);
+  }, []);
+
+  const provenance =
+    source === "safety"
+      ? "Gemini was skipped. This is a fixed safety plan, not a model response."
+      : source === "gemini" && cached
+        ? "Same check-in fingerprint as a recent session. Reused the cached plan (24h)."
+        : source === "gemini"
+          ? "Generated by Gemini from this check-in. Validated against a Zod schema."
+          : source === "fallback"
+            ? "The model was unavailable. Showing a generic first-aid plan."
+            : null;
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-6 py-10 text-zinc-900 dark:text-zinc-50">
+    <PageShell>
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
+          <p className="text-xs font-semibold uppercase tracking-wide text-brand">
+            Plan
+          </p>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight">
             Your CalmPath plan
           </h1>
-          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
-            Severity: <span className="font-semibold">{severity}</span> • Score:{" "}
-            <span className="font-semibold">{score}</span>
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {severity !== "unknown" ? (
+              <SeverityChip severity={severity} score={score} />
+            ) : null}
+            {streak > 0 ? (
+              <span className="text-xs font-semibold text-quiet">
+                Streak {streak}d
+              </span>
+            ) : null}
+            <PlanBadge source={source} cached={cached} />
+          </div>
         </div>
         <div className="flex items-center gap-2">
-          <a
-            href="/checkin"
-            className="rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950/30 dark:text-zinc-50 dark:hover:bg-zinc-900/40"
-          >
-            Edit check‑in
-          </a>
-          <a
-            href="/dashboard"
-            className="rounded-xl bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-800"
-          >
+          <ButtonLink href="/checkin" variant="secondary" size="sm">
+            Edit check-in
+          </ButtonLink>
+          <ButtonLink href="/dashboard" size="sm">
             Dashboard
-          </a>
+          </ButtonLink>
         </div>
       </div>
 
       {error ? (
-        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+        <div className="mb-4 rounded-xl border border-mod-soft bg-mod-soft p-4 text-sm">
           <p className="font-semibold">Note</p>
-          <p className="mt-1">{error}</p>
+          <p className="mt-1 text-quiet">{error}</p>
         </div>
       ) : null}
 
+      {cloudSaved === "saved" ? (
+        <p className="mb-4 text-xs text-quiet">
+          Anonymized summary saved to your account.
+        </p>
+      ) : cloudSaved === "local" ? (
+        <p className="mb-4 text-xs text-quiet">
+          Saved on this device. Add Firebase env vars to persist in the cloud.
+        </p>
+      ) : null}
+
       {loading || !plan ? (
-        <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/60">
-          <p className="text-sm text-zinc-600 dark:text-zinc-300">
-            Generating your plan…
-          </p>
+        <Card>
+          <p className="text-sm text-quiet">Building your plan…</p>
           <div className="mt-4 grid gap-3">
-            <div className="h-4 w-3/4 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800/60" />
-            <div className="h-4 w-2/3 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800/60" />
-            <div className="h-4 w-5/6 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800/60" />
+            <div className="h-16 animate-pulse rounded-xl bg-soft" />
+            <div className="h-24 animate-pulse rounded-xl bg-soft" />
+            <div className="h-24 animate-pulse rounded-xl bg-soft" />
           </div>
-        </div>
+        </Card>
       ) : (
         <div className="grid gap-4">
+          <Card title="Why this band">
+            <ScoreMeter score={score} />
+            {provenance ? (
+              <p className="mt-4 text-sm leading-6 text-quiet">{provenance}</p>
+            ) : null}
+            {reasons.length > 0 ? (
+              <ul className="mt-4 grid gap-2">
+                {reasons.map((reason) => (
+                  <li
+                    key={reason}
+                    className="rounded-xl bg-soft px-3 py-2 text-sm"
+                  >
+                    {reason}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </Card>
+
+          <SeverityDelta previous={previous} current={{ severity, score }} />
+
           <Card title="What this means">
-            <p className="text-base leading-7 text-zinc-700 dark:text-zinc-200">
-              {plan.severityReasoning}
-            </p>
+            <p className="text-base leading-7">{plan.severityReasoning}</p>
           </Card>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <Card title="Do this now (10–20 min)">
-              <ul className="list-disc pl-5 text-base text-zinc-700 dark:text-zinc-200">
+              <ol className="list-decimal space-y-2 pl-5 text-base">
                 {plan.immediateActions.map((x, i) => (
-                  <li key={i} className="py-0.5">
-                    {x}
-                  </li>
+                  <li key={i}>{x}</li>
                 ))}
-              </ul>
+              </ol>
             </Card>
             <Card title="Daily habits (next 7 days)">
-              <ul className="list-disc pl-5 text-base text-zinc-700 dark:text-zinc-200">
+              <ol className="list-decimal space-y-2 pl-5 text-base">
                 {plan.dailyHabits.map((x, i) => (
-                  <li key={i} className="py-0.5">
-                    {x}
-                  </li>
+                  <li key={i}>{x}</li>
                 ))}
-              </ul>
+              </ol>
             </Card>
           </div>
 
           <Card title="Weekly goal">
-            <p className="text-base text-zinc-700 dark:text-zinc-200">{plan.weeklyGoal}</p>
+            <p className="text-base">{plan.weeklyGoal}</p>
           </Card>
 
-          <Card title="Follow-up checklist">
-            <ul className="grid gap-2 text-base text-zinc-700 dark:text-zinc-200">
-              {plan.followUpChecklist.map((x, i) => (
-                <li
-                  key={i}
-                  className="rounded-lg border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950/30"
-                >
-                  {x}
-                </li>
-              ))}
-            </ul>
-          </Card>
+          {checkinId ? (
+            <FollowUpChecklist checkinId={checkinId} items={plan.followUpChecklist} />
+          ) : (
+            <Card title="Follow-up checklist">
+              <ul className="grid gap-2 text-base">
+                {plan.followUpChecklist.map((x, i) => (
+                  <li key={i} className="rounded-lg border border-line px-3 py-2">
+                    {x}
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
 
           <div className="grid gap-4 sm:grid-cols-2">
             <Card title="Message a friend">
-              <p className="text-base text-zinc-700 dark:text-zinc-200">
-                {plan.messageScripts.friend}
-              </p>
+              <p className="text-base leading-7">{plan.messageScripts.friend}</p>
             </Card>
             <Card title="Message a mentor/counselor">
-              <p className="text-base text-zinc-700 dark:text-zinc-200">
-                {plan.messageScripts.mentor}
-              </p>
+              <p className="text-base leading-7">{plan.messageScripts.mentor}</p>
             </Card>
           </div>
 
           <Card title="Resources">
             <div className="grid gap-2">
               {plan.resources.map((r, i) => (
-                <div
-                  key={i}
-                  className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950/30"
-                >
-                  <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
-                    {r.title}
-                  </p>
-                  <p className="mt-1 text-base text-zinc-700 dark:text-zinc-200">
-                    {r.description}
-                  </p>
+                <div key={i} className="rounded-xl bg-soft px-4 py-3">
+                  <p className="text-sm font-semibold">{r.title}</p>
+                  <p className="mt-1 text-sm text-quiet">{r.description}</p>
                 </div>
               ))}
             </div>
           </Card>
 
-          <p className="text-xs leading-5 text-zinc-500 dark:text-zinc-400">
+          <p className="text-xs leading-5 text-quiet">
             Safety note: CalmPath is not medical advice. If you feel unsafe,
             seek immediate help from local emergency services or a trusted person.
           </p>
         </div>
       )}
-    </div>
+    </PageShell>
   );
 }
-
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/60">
-      <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">{title}</h2>
-      <div className="mt-3">{children}</div>
-    </section>
-  );
-}
-
-function saveHistory(item: { createdAt: string; severity: string; score: number }) {
-  try {
-    const raw = localStorage.getItem(HISTORY_KEY);
-    const list = raw ? (JSON.parse(raw) as unknown[]) : [];
-    const next = Array.isArray(list) ? [...list, item] : [item];
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(next.slice(-200)));
-  } catch {
-    // ignore
-  }
-}
-

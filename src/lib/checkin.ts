@@ -79,7 +79,7 @@ export function defaultResources(): { title: string; description: string }[] {
     {
       title: "Talk to someone you trust",
       description:
-        "A friend, family member, mentor, or counselor — ask for 10 minutes today.",
+        "A friend, family member, mentor, or counselor. Ask for 10 minutes today.",
     },
     {
       title: "Campus counseling / student support",

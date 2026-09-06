@@ -1,16 +1,27 @@
 import { NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { CheckInSchema, defaultResources, scoreCheckIn } from "@/lib/checkin";
-import { PlanSchema, type Plan } from "@/lib/planSchema";
+import { CheckInSchema, scoreCheckIn } from "@/lib/checkin";
+import { PlanSchema } from "@/lib/planSchema";
+import { PROMPT_VERSION } from "@/lib/constants";
+import {
+  CALMPATH_SYSTEM_INSTRUCTION,
+  buildPlanPrompt,
+  planUserMessage,
+} from "@/lib/prompts/calmPathPlan";
+import { checkRateLimit, getClientIp } from "@/lib/rateLimit";
+import { checkInFingerprint, getCachedPlan, setCachedPlan } from "@/lib/planCache";
+import { normalizePlan } from "@/lib/planNormalize";
+import { highRiskPlan } from "@/lib/safetyPlan";
 
 export const runtime = "nodejs";
 
-function jsonResponse(data: unknown, status = 200) {
-  return NextResponse.json(data, { status });
+type PlanSource = "gemini" | "safety";
+
+function jsonResponse(data: unknown, status = 200, headers?: HeadersInit) {
+  return NextResponse.json(data, { status, headers });
 }
 
 function safeJsonParse(text: string): unknown {
-  // Try to extract first JSON object from model output.
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start === -1 || end === -1 || end <= start) return null;
@@ -22,50 +33,66 @@ function safeJsonParse(text: string): unknown {
   }
 }
 
-function highRiskPlan(reason: string): Plan {
-  return {
-    severityReasoning:
-      reason +
-      " If you feel unsafe or might harm yourself, seek immediate help from local emergency services or a trusted person right now.",
-    immediateActions: [
-      "Stop what you’re doing and take 10 slow breaths (count 4 in, 6 out).",
-      "Reach out to a trusted person now (friend/roommate/family/mentor).",
-      "Move to a safer, more public place if you’re alone and feeling unsafe.",
-    ],
-    dailyHabits: [
-      "Eat something small and drink water (even a snack counts).",
-      "Take a 10-minute walk or stretch to reset your body.",
-      "Do one “minimum viable task” (2 minutes) to reduce overwhelm.",
-    ],
-    weeklyGoal: "Book one real support touchpoint (counselor/mentor/doctor).",
-    followUpChecklist: [
-      "Day 1: Tell one person what you’re going through (copy a script).",
-      "Day 2: Reduce one commitment for this week (say no to 1 thing).",
-      "Day 3: Sleep plan: pick a fixed wake time; keep it 3 days.",
-      "Day 4: Do one short study block (20 minutes) + break.",
-      "Day 5: Ask for help on one specific academic task.",
-      "Day 6: Do something restorative (music, sport, prayer, nature).",
-      "Day 7: Re-check-in and compare how you feel vs Day 1.",
-    ],
-    messageScripts: {
-      friend:
-        "Hey — I’m not doing great today and could really use 10 minutes to talk. Are you free right now? If not, when can we talk soon?",
-      mentor:
-        "Hi, I’m having a rough week and I think I need some support. Could we meet for 10–15 minutes (or can you point me to the right resource)?",
-    },
-    resources: defaultResources(),
-  };
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Gemini request timed out.")), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function userFacingGeminiError(error: unknown) {
+  const message = error instanceof Error ? error.message : "";
+  if (message.toLowerCase().includes("timeout")) {
+    return "The AI service took too long. Please try again in a moment.";
+  }
+  if (message.toLowerCase().includes("api key") || message.toLowerCase().includes("permission")) {
+    return "The AI service is not configured correctly. Please try again later.";
+  }
+  return "We couldn’t generate a plan right now. Please try again.";
 }
 
 export async function POST(req: Request) {
+  const ip = getClientIp(req);
+  const limit = checkRateLimit(ip);
+  const limitHeaders = {
+    "X-RateLimit-Remaining": String(limit.remaining),
+  };
+
+  if (!limit.ok) {
+    console.info("[generate-plan]", {
+      event: "rate_limited",
+      promptVersion: PROMPT_VERSION,
+    });
+    return jsonResponse(
+      {
+        error: `Too many plan requests. Please wait ${limit.retryAfterSec} seconds and try again.`,
+      },
+      429,
+      { ...limitHeaders, "Retry-After": String(limit.retryAfterSec) },
+    );
+  }
+
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
+    console.info("[generate-plan]", { event: "missing_api_key", promptVersion: PROMPT_VERSION });
     return jsonResponse(
       {
         error:
           "Missing GEMINI_API_KEY. Add it to .env.local and your Vercel project env vars.",
       },
       500,
+      limitHeaders,
     );
   }
 
@@ -73,101 +100,158 @@ export async function POST(req: Request) {
   try {
     body = await req.json();
   } catch {
-    return jsonResponse({ error: "Invalid JSON body" }, 400);
+    console.info("[generate-plan]", { event: "invalid_json", promptVersion: PROMPT_VERSION });
+    return jsonResponse({ error: "Invalid JSON body" }, 400, limitHeaders);
   }
 
   const parsed = CheckInSchema.safeParse(body);
   if (!parsed.success) {
+    console.info("[generate-plan]", {
+      event: "invalid_payload",
+      issueCount: parsed.error.issues.length,
+      promptVersion: PROMPT_VERSION,
+    });
     return jsonResponse(
       { error: "Invalid check-in payload", issues: parsed.error.issues },
       400,
+      limitHeaders,
     );
   }
 
   const checkin = parsed.data;
   const { severity, score, reasons } = scoreCheckIn(checkin);
-  if (severity === "high" || checkin.unsafeThoughts) {
-    return jsonResponse({
-      plan: highRiskPlan(reasons[0] ?? "High-risk indicators detected."),
+  const highRisk = severity === "high" || checkin.unsafeThoughts;
+
+  console.info("[generate-plan]", {
+    event: "request",
+    severity,
+    score,
+    highRisk,
+    hasNotes: Boolean(checkin.notes && checkin.notes.length > 0),
+    promptVersion: PROMPT_VERSION,
+  });
+
+  if (highRisk) {
+    const source: PlanSource = "safety";
+    const plan =
+      normalizePlan(highRiskPlan(reasons[0] ?? "High-risk indicators detected.")) ??
+      highRiskPlan(reasons[0] ?? "High-risk indicators detected.");
+    console.info("[generate-plan]", {
+      event: "safety_path",
       severity,
       score,
+      promptVersion: PROMPT_VERSION,
     });
+    return jsonResponse(
+      {
+        plan,
+        severity,
+        score,
+        source,
+        promptVersion: PROMPT_VERSION,
+        cached: false,
+      },
+      200,
+      limitHeaders,
+    );
+  }
+
+  const fingerprint = checkInFingerprint(checkin);
+  const cached = getCachedPlan(fingerprint);
+  if (cached) {
+    console.info("[generate-plan]", {
+      event: "cache_hit",
+      severity,
+      score,
+      promptVersion: PROMPT_VERSION,
+    });
+    return jsonResponse(
+      {
+        plan: cached.plan,
+        severity: cached.severity,
+        score: cached.score,
+        source: cached.source,
+        promptVersion: PROMPT_VERSION,
+        cached: true,
+      },
+      200,
+      limitHeaders,
+    );
   }
 
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({
-    // Use a current model ID for Google AI Studio keys.
-    // (Model availability can vary by key; adjust via GEMINI_MODEL if needed.)
     model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
-    systemInstruction:
-      "You are CalmPath, a wellbeing assistant for students. You do NOT provide medical advice or diagnosis. " +
-      "Your job is to generate a practical, empathetic, culturally-neutral plan for stress management. " +
-      "Do not mention policy or refusal text. If any self-harm intent is present, instruct immediate help and keep advice minimal (but in this request, unsafeThoughts is false). " +
-      "Return ONLY valid JSON that matches the given schema—no markdown, no extra keys.",
+    systemInstruction: CALMPATH_SYSTEM_INSTRUCTION,
   });
 
-  const prompt = {
-    checkin: {
-      sleepHours: checkin.sleepHours,
-      stress: checkin.stress,
-      anxiety: checkin.anxiety,
-      focus: checkin.focus,
-      socialSupport: checkin.socialSupport,
-      appetite: checkin.appetite,
-      workload: checkin.workload,
-      lowMoodDaysLast2Weeks: checkin.lowMoodDaysLast2Weeks,
-      notes: checkin.notes ?? "",
-    },
-    computed: { severity, score, reasons },
-    outputSchema: {
-      severityReasoning: "string (<=600 chars, 2–4 sentences)",
-      immediateActions: "array of 3-5 short strings (<=140 chars each)",
-      dailyHabits: "array of 3-5 short strings (<=140 chars each)",
-      weeklyGoal: "string (<=200 chars)",
-      followUpChecklist: "array of 5-10 short strings (<=140 chars each)",
-      messageScripts: { friend: "string", mentor: "string" },
-      resources:
-        "array of objects {title:string<=80, description:string<=200} (include 3-5 items, generic resources ok)",
-    },
-  };
+  const prompt = buildPlanPrompt({ checkin, severity, score, reasons });
+  const userMessage = planUserMessage(prompt);
 
   let text = "";
   try {
-    const result = await model.generateContent(
-      "Generate a personalized stress first-aid plan.\n" +
-        "Return only JSON.\n\n" +
-        JSON.stringify(prompt),
-    );
-    text = result.response.text();
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const result = await withTimeout(model.generateContent(userMessage), 20_000);
+        text = result.response.text();
+        lastError = null;
+        break;
+      } catch (e) {
+        lastError = e;
+        if (attempt < 2) await sleep(400 * (attempt + 1));
+      }
+    }
+    if (!text) throw lastError ?? new Error("Gemini request failed.");
   } catch (e) {
-    return jsonResponse(
-      {
-        error:
-          e instanceof Error
-            ? e.message
-            : "Gemini request failed. Check model name and API key permissions.",
-      },
-      502,
-    );
+    console.info("[generate-plan]", {
+      event: "gemini_failed",
+      severity,
+      score,
+      promptVersion: PROMPT_VERSION,
+    });
+    return jsonResponse({ error: userFacingGeminiError(e) }, 502, limitHeaders);
   }
 
   const maybeJson = safeJsonParse(text);
-  const validated = PlanSchema.safeParse(maybeJson);
-  if (!validated.success) {
+  const validated = normalizePlan(maybeJson) ?? PlanSchema.safeParse(maybeJson).data ?? null;
+  if (!validated) {
+    console.info("[generate-plan]", {
+      event: "invalid_model_json",
+      promptVersion: PROMPT_VERSION,
+    });
     return jsonResponse(
-      {
-        error: "Gemini returned non-conforming JSON.",
-        raw: text.slice(0, 2000),
-        issues: validated.error.issues,
-      },
+      { error: "The AI response was not usable. Please try again." },
       502,
+      limitHeaders,
     );
   }
 
-  return jsonResponse({
-    plan: validated.data,
+  setCachedPlan(fingerprint, {
+    plan: validated,
     severity,
     score,
+    source: "gemini",
   });
-}
 
+  console.info("[generate-plan]", {
+    event: "ok",
+    severity,
+    score,
+    source: "gemini",
+    promptVersion: PROMPT_VERSION,
+  });
+
+  return jsonResponse(
+    {
+      plan: validated,
+      severity,
+      score,
+      source: "gemini" satisfies PlanSource,
+      promptVersion: PROMPT_VERSION,
+      cached: false,
+    },
+    200,
+    limitHeaders,
+  );
+}

@@ -1,24 +1,66 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-
-const HISTORY_KEY = "calmpath:history";
-
-type HistoryItem = { createdAt: string; severity: string; score: number };
+import { EmptyState, Skeleton } from "@/components/EmptyState";
+import { Button, ButtonLink } from "@/components/ui/Button";
+import { Card, PageShell } from "@/components/ui/Card";
+import { SeverityChip } from "@/components/ui/SeverityChip";
+import { checkInStreak } from "@/lib/analytics";
+import { useAuth } from "@/components/AuthProvider";
+import { firebaseEnabled } from "@/lib/firebase/auth";
+import {
+  clearCloudCheckIns,
+  listCloudCheckIns,
+  readLocalHistory,
+  writeLocalHistory,
+  type HistoryItem,
+} from "@/lib/history";
 
 export default function DashboardPage() {
+  const { enabled, ready, user } = useAuth();
   const [items, setItems] = useState<HistoryItem[]>([]);
+  const [source, setSource] = useState<"cloud" | "device">("device");
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(HISTORY_KEY);
-      const list = raw ? (JSON.parse(raw) as unknown) : [];
-      if (Array.isArray(list)) setItems(list as HistoryItem[]);
-    } catch {
-      setItems([]);
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      const local = readLocalHistory().slice().reverse();
+      if (!firebaseEnabled() || !ready) {
+        if (!cancelled) {
+          setItems(local);
+          setSource("device");
+          setLoading(false);
+        }
+        return;
+      }
+      try {
+        const cloud = await listCloudCheckIns();
+        if (cancelled) return;
+        if (cloud.length > 0) {
+          setItems(cloud);
+          setSource("cloud");
+        } else {
+          setItems(local);
+          setSource("device");
+        }
+      } catch {
+        if (!cancelled) {
+          setItems(local);
+          setSource("device");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
-  }, []);
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, ready, user?.uid]);
 
+  const streak = useMemo(() => checkInStreak(items), [items]);
   const counts = useMemo(() => {
     const c = { low: 0, moderate: 0, high: 0 };
     for (const it of items) {
@@ -30,98 +72,122 @@ export default function DashboardPage() {
   }, [items]);
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-6 py-10 text-zinc-900 dark:text-zinc-50">
+    <PageShell>
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Impact dashboard (prototype)
+          <p className="text-xs font-semibold uppercase tracking-wide text-brand">
+            History
+          </p>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight">
+            Your check-ins
           </h1>
-          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
-            Anonymized aggregate counts from check-ins on this device (demo-ready).
+          <p className="mt-1 text-sm text-quiet">
+            Anonymized counts
+            {source === "cloud" ? " from your account." : " on this device."}
+            {streak > 0
+              ? ` Streak: ${streak} day${streak === 1 ? "" : "s"}.`
+              : ""}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <a
-            href="/"
-            className="rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950/30 dark:text-zinc-50 dark:hover:bg-zinc-900/40"
-          >
+          <ButtonLink href="/" variant="secondary" size="sm">
             Home
-          </a>
-          <a
-            href="/checkin"
-            className="rounded-xl bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-800"
-          >
-            New check‑in
-          </a>
+          </ButtonLink>
+          <ButtonLink href="/checkin" size="sm">
+            New check-in
+          </ButtonLink>
         </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <Stat label="Low" value={counts.low} />
-        <Stat label="Moderate" value={counts.moderate} />
-        <Stat label="High" value={counts.high} />
+        {loading ? (
+          <>
+            <Skeleton className="h-28" />
+            <Skeleton className="h-28" />
+            <Skeleton className="h-28" />
+          </>
+        ) : (
+          <>
+            <Stat label="Low" value={counts.low} tone="low" />
+            <Stat label="Moderate" value={counts.moderate} tone="moderate" />
+            <Stat label="High" value={counts.high} tone="high" />
+          </>
+        )}
       </div>
 
-      <div className="mt-6 rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/60">
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
-          Recent check-ins
-        </h2>
-        {items.length === 0 ? (
-          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
-            No check-ins yet. Complete a check‑in to populate the dashboard.
-          </p>
+      <Card className="mt-6" title="Recent check-ins">
+        {loading ? (
+          <div className="grid gap-2" aria-busy="true" aria-label="Loading check-ins">
+            <Skeleton className="h-16" />
+            <Skeleton className="h-16" />
+            <Skeleton className="h-16" />
+          </div>
+        ) : items.length === 0 ? (
+          <EmptyState
+            title="No check-ins yet"
+            body="Complete a 2–3 minute check-in to populate this dashboard with anonymized severity counts."
+            action={
+              <ButtonLink href="/checkin" size="sm">
+                Start check-in
+              </ButtonLink>
+            }
+          />
         ) : (
-          <div className="mt-3 grid gap-2">
-            {items
-              .slice()
-              .reverse()
-              .slice(0, 12)
-              .map((it, idx) => (
-                <div
-                  key={idx}
-                  className="flex items-center justify-between gap-4 rounded-xl border border-zinc-200 px-4 py-3 dark:border-zinc-800"
-                >
-                  <div>
-                    <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
-                      {it.severity} • score {it.score}
-                    </p>
-                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                      {new Date(it.createdAt).toLocaleString()}
-                    </p>
-                  </div>
-                  <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-semibold text-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-200">
-                    anonymized
-                  </span>
+          <div className="grid gap-2">
+            {items.slice(0, 12).map((it, idx) => (
+              <div
+                key={it.id ?? `${it.createdAt}-${idx}`}
+                className="flex items-center justify-between gap-4 rounded-xl border border-line px-4 py-3"
+              >
+                <div>
+                  <SeverityChip severity={it.severity} score={it.score} />
+                  <p className="mt-1 text-xs text-quiet">
+                    {new Date(it.createdAt).toLocaleString()}
+                  </p>
                 </div>
-              ))}
+                <span className="text-xs font-semibold text-quiet">anonymized</span>
+              </div>
+            ))}
           </div>
         )}
 
-        <button
-          type="button"
-          onClick={() => {
-            localStorage.removeItem(HISTORY_KEY);
-            setItems([]);
-          }}
-          className="mt-4 rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950/30 dark:text-zinc-50 dark:hover:bg-zinc-900/40"
-        >
-          Reset demo data
-        </button>
-      </div>
-    </div>
+        {!loading && items.length > 0 ? (
+          <Button
+            type="button"
+            variant="secondary"
+            className="mt-4"
+            onClick={() => {
+              writeLocalHistory([]);
+              setItems([]);
+              if (firebaseEnabled()) {
+                void clearCloudCheckIns();
+              }
+            }}
+          >
+            Reset demo data
+          </Button>
+        ) : null}
+      </Card>
+    </PageShell>
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+function Stat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "low" | "moderate" | "high";
+}) {
+  const bar =
+    tone === "high" ? "bg-high" : tone === "moderate" ? "bg-moderate" : "bg-low";
   return (
-    <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/60">
-      <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
-        {label}
-      </p>
-      <p className="mt-1 text-3xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">
-        {value}
-      </p>
+    <div className="rounded-2xl border border-line bg-surface p-5">
+      <p className="text-xs font-medium text-quiet">{label}</p>
+      <p className="mt-1 text-3xl font-semibold tabular-nums">{value}</p>
+      <div className={`mt-3 h-1 rounded-full ${bar}`} />
     </div>
   );
 }
-
