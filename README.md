@@ -1,17 +1,17 @@
-## CalmPath — Student Stress & Burnout First‑Aid (Solution Challenge 2026)
+## CalmPath — Student Stress & Burnout First-Aid
 
 [![CI](https://github.com/visshva-r/CalmPath-Student-Wellbeing/actions/workflows/ci.yml/badge.svg)](https://github.com/visshva-r/CalmPath-Student-Wellbeing/actions/workflows/ci.yml)
 
-**CalmPath** is a 2–3 minute student wellbeing check-in: an **explainable severity score**, a **safety-gated Gemini 7-day plan**, and a follow-up checklist. It does not diagnose.
+**CalmPath** is a 2–3 minute student wellbeing check-in: a **clear severity score**, a **safety-gated Gemini 7-day plan**, and a follow-up checklist. It does not diagnose.
 
 Live: https://calm-path-student-wellbeing.vercel.app/  
 Case study: [`docs/CASE_STUDY.md`](docs/CASE_STUDY.md)
 
-### Why it matters (SDG 3)
+### Why it matters
 Exam weeks overload students. CalmPath is a short check-in and a next-week plan. Campuses get anonymized demand charts so support can be staffed where load is highest.
 
 ### Resume bullets
-- End-to-end product: check-in wizard → explainable score (with reasons) → Gemini or **safety fallback** → 7-day checklist
+- End-to-end product: check-in wizard → clear score (with reasons) → Gemini or **safety fallback** → 7-day checklist
 - Safety-first AI: high-risk sessions **skip Gemini** and return a fixed escalation plan
 - Privacy-first storage: anonymized history; notes opt-in; Firebase optional with localStorage fallback
 - Campus admin: severity mix, peak hours/weekdays, CSV — no PII
@@ -48,7 +48,7 @@ Full write-up: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 1. Landing → **Start check-in** → consent (**I understand, continue**)
 2. Three steps: Rest & body → Stress & support → Safety & notes
 3. Results: score meter + reasons + plan + checklist
-4. **Safety demo:** on step 3, check “I feel unsafe…”. You should see **Safety fallback plan** (Gemini skipped)
+4. **Safety path:** on step 3, check “I feel unsafe…”. You should see **Safety fallback plan** (Gemini skipped)
 5. Dashboard (history) and Campus (`/admin`) charts
 
 ### Google AI usage
@@ -97,7 +97,7 @@ npm run build
 
 CI runs lint, unit tests, production build, and Chromium E2E on every push to `main`.
 
-## Firebase setup (optional but recommended)
+## Firebase setup (optional)
 1. Create a Firebase project and enable **Anonymous Auth** + **Google Auth**.
 2. Create a Firestore database (production or test mode, then publish rules).
 3. Copy web app config into `.env.local` (and Vercel env vars).
@@ -123,7 +123,7 @@ CalmPath stays on **Vercel** for the Next.js app and API routes. That is the pro
 | Gemini | Google AI Studio key (`GEMINI_API_KEY` on Vercel) |
 | Auth (anonymous / Google) | Firebase Auth |
 | Check-in summaries + `publicCheckins` | Firestore |
-| Demo without a Firebase project | Browser `localStorage` / `sessionStorage` |
+| Without a Firebase project | Browser `localStorage` / `sessionStorage` |
 
 Publish `firestore.rules` from this repo if you enable Firebase. The app does not require GCP Hosting.
 

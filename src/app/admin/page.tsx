@@ -169,7 +169,7 @@ export default function AdminPage() {
             is highest.
             {usingSample ? " Showing sample campus data for demo." : ""}
             {!pinRequired
-              ? " Ungated demo. Set NEXT_PUBLIC_ADMIN_PIN to lock this page."
+              ? " Open access for now. Set NEXT_PUBLIC_ADMIN_PIN to lock this page."
               : ""}
           </p>
         </div>

@@ -27,9 +27,9 @@ export const metadata: Metadata = {
   keywords: [
     "student wellbeing",
     "stress",
+    "mental health",
     "Gemini",
-    "Solution Challenge",
-    "SDG 3",
+    "Next.js",
   ],
   authors: [{ name: "CalmPath" }],
   openGraph: {

@@ -25,7 +25,7 @@ export default function Home() {
       <section className="mx-auto grid w-full max-w-5xl gap-12 px-6 py-14 lg:grid-cols-[1.15fr_0.85fr] lg:items-center lg:py-20">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand">
-            CalmPath · SDG 3
+            CalmPath · Student wellbeing
           </p>
           <h1 className="mt-3 text-4xl font-semibold tracking-tight text-foreground sm:text-5xl sm:leading-[1.1]">
             Two minutes.

@@ -28,7 +28,7 @@ export default function OpenGraphImage() {
             marginBottom: 20,
           }}
         >
-          SDG 3 · Student first-aid
+          Student wellbeing first-aid
         </div>
         <div style={{ fontSize: 72, fontWeight: 700, lineHeight: 1.05 }}>
           Two minutes.
