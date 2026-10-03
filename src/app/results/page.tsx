@@ -19,7 +19,7 @@ import {
   type PlanSource,
 } from "@/lib/history";
 import { PlanSchema, type Plan } from "@/lib/planSchema";
-import { fallbackPlan } from "@/lib/safetyPlan";
+import { fallbackPlan, highRiskPlan } from "@/lib/safetyPlan";
 import { loadCheckInSession } from "@/lib/sessionCheckin";
 import { firebaseEnabled } from "@/lib/firebase/auth";
 
@@ -63,6 +63,8 @@ export default function ResultsPage() {
       }
 
       const computed = scoreCheckIn(session.checkin);
+      const highRisk =
+        computed.severity === "high" || session.checkin.unsafeThoughts;
       setSeverity(computed.severity);
       setScore(computed.score);
       setReasons(computed.reasons);
@@ -73,6 +75,15 @@ export default function ResultsPage() {
       let nextPlan: Plan = fallbackPlan();
       let nextSeverity: string = computed.severity;
       let nextScore = computed.score;
+
+      function applySafetyFallback() {
+        nextSource = "safety";
+        nextPlan = highRiskPlan(
+          computed.reasons[0] ?? "High-risk indicators detected.",
+        );
+        nextSeverity = computed.severity;
+        nextScore = computed.score;
+      }
 
       try {
         const res = await fetch("/api/generate-plan", {
@@ -92,12 +103,16 @@ export default function ResultsPage() {
         nextScore = json.score;
         if (json.cached) setCached(true);
       } catch (e) {
-        nextSource = "fallback";
-        nextPlan = fallbackPlan();
-        if (!cancelled) {
-          setError(
-            e instanceof Error ? e.message : "Failed to generate plan. Try again.",
-          );
+        if (highRisk) {
+          applySafetyFallback();
+        } else {
+          nextSource = "fallback";
+          nextPlan = fallbackPlan();
+          if (!cancelled) {
+            setError(
+              e instanceof Error ? e.message : "Failed to generate plan. Try again.",
+            );
+          }
         }
       }
 
