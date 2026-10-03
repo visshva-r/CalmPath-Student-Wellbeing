@@ -167,7 +167,7 @@ export default function AdminPage() {
           <p className="mt-1 max-w-xl text-sm text-quiet">
             Anonymized severity demand so campuses can staff counselors where load
             is highest.
-            {usingSample ? " Showing sample campus data for demo." : ""}
+            {usingSample ? " Showing sample campus data." : ""}
             {!pinRequired
               ? " Open access for now. Set NEXT_PUBLIC_ADMIN_PIN to lock this page."
               : ""}

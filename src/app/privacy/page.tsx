@@ -44,7 +44,7 @@ export default function PrivacyPage() {
           <p className="mt-2">
             If Firebase is configured, you are signed in anonymously so your
             history can persist after you choose Google sign-in. You can reset
-            local demo data from the dashboard. This tool is not medical advice.
+            local history from the dashboard. This tool is not medical advice.
           </p>
         </section>
       </div>

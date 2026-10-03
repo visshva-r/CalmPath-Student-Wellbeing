@@ -5,17 +5,17 @@ const steps = [
   {
     n: "01",
     title: "Check in",
-    body: "Sleep, stress, support. About two minutes, with a live score as you go.",
+    body: "Three-step wizard. Inputs validated before you continue.",
   },
   {
     n: "02",
     title: "See why",
-    body: "Low, moderate, or high, with the reasons behind it.",
+    body: "Deterministic low / moderate / high band, with reasons on the results page.",
   },
   {
     n: "03",
     title: "Do the week",
-    body: "Immediate actions, habits, scripts, and a 7-day checklist you can tick off.",
+    body: "Gemini 7-day plan (Zod-validated JSON), or a fixed safety plan if risk is high.",
   },
 ];
 
@@ -54,21 +54,24 @@ export default function Home() {
 
         <aside className="rounded-3xl border border-line bg-surface p-6 shadow-[0_12px_40px_rgb(42_107_90/0.08)]">
           <p className="text-xs font-semibold uppercase tracking-wide text-quiet">
-            Sample outcome
+            End-to-end flow
           </p>
-          <p className="mt-2 text-lg font-semibold">Moderate · score 58</p>
-          <div className="mt-3 h-2 overflow-hidden rounded-full bg-soft">
-            <div className="h-full w-[58%] rounded-full bg-moderate" />
-          </div>
-          <ul className="mt-5 grid gap-2 text-sm text-quiet">
-            <li className="rounded-xl bg-soft px-3 py-2">Low sleep last night (&lt;6h)</li>
-            <li className="rounded-xl bg-soft px-3 py-2">Workload pressure is elevated</li>
-            <li className="rounded-xl bg-brand-soft px-3 py-2 text-brand">
-              Plan path: Gemini (not a medical label)
+          <ol className="mt-3 grid gap-2 text-sm">
+            <li className="rounded-xl bg-soft px-3 py-2">
+              <span className="font-semibold text-foreground">Check-in →</span>{" "}
+              3 steps, live severity preview
             </li>
-          </ul>
+            <li className="rounded-xl bg-soft px-3 py-2">
+              <span className="font-semibold text-foreground">Results →</span>{" "}
+              score, reasons, plan pipeline
+            </li>
+            <li className="rounded-xl border border-moderate/30 bg-mod-soft/50 px-3 py-2">
+              <span className="font-semibold text-foreground">Safety →</span>{" "}
+              check “I feel unsafe” on step 3; Gemini is skipped
+            </li>
+          </ol>
           <p className="mt-4 text-xs text-quiet">
-            High-risk check-ins never call Gemini. They return a safety template instead.
+            Normal path uses Gemini; high-risk answers use a fixed safety template only.
           </p>
         </aside>
       </section>

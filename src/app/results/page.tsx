@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { FollowUpChecklist } from "@/components/FollowUpChecklist";
 import { PlanBadge } from "@/components/PlanBadge";
+import { PlanPipeline } from "@/components/PlanPipeline";
 import { SeverityDelta } from "@/components/SeverityDelta";
 import { ButtonLink } from "@/components/ui/Button";
 import { Card, PageShell } from "@/components/ui/Card";
@@ -203,15 +204,13 @@ export default function ResultsPage() {
         <p className="mb-4 text-xs text-quiet">
           Anonymized summary saved to your account.
         </p>
-      ) : cloudSaved === "local" ? (
-        <p className="mb-4 text-xs text-quiet">
-          Saved on this device. Add Firebase env vars to persist in the cloud.
-        </p>
       ) : null}
 
       {loading || !plan ? (
         <Card>
-          <p className="text-sm text-quiet">Building your plan…</p>
+          <p className="text-sm text-quiet">
+            Scoring check-in, then generating your plan…
+          </p>
           <div className="mt-4 grid gap-3">
             <div className="h-16 animate-pulse rounded-xl bg-soft" />
             <div className="h-24 animate-pulse rounded-xl bg-soft" />
@@ -220,6 +219,26 @@ export default function ResultsPage() {
         </Card>
       ) : (
         <div className="grid gap-4">
+          <PlanPipeline
+            severity={severity}
+            score={score}
+            source={source}
+            cached={cached}
+          />
+
+          {source === "safety" ? (
+            <div
+              className="rounded-xl border border-moderate/40 bg-mod-soft px-4 py-3 text-sm"
+              role="status"
+            >
+              <p className="font-semibold text-moderate">Safety guardrail active</p>
+              <p className="mt-1 text-quiet">
+                This session did not call Gemini. You are seeing a fixed escalation
+                plan for high-risk answers.
+              </p>
+            </div>
+          ) : null}
+
           <Card title="Why this band">
             <ScoreMeter score={score} />
             {provenance ? (

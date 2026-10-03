@@ -4,18 +4,16 @@
 
 **CalmPath** is a 2–3 minute student wellbeing check-in: a **clear severity score**, a **safety-gated Gemini 7-day plan**, and a follow-up checklist. It does not diagnose.
 
-Live: https://calm-path-student-wellbeing.vercel.app/  
-Case study: [`docs/CASE_STUDY.md`](docs/CASE_STUDY.md)
+Live: https://calm-path-student-wellbeing.vercel.app/
 
 ### Why it matters
 Exam weeks overload students. CalmPath is a short check-in and a next-week plan. Campuses get anonymized demand charts so support can be staffed where load is highest.
 
-### Resume bullets
-- End-to-end product: check-in wizard → clear score (with reasons) → Gemini or **safety fallback** → 7-day checklist
-- Safety-first AI: high-risk sessions **skip Gemini** and return a fixed escalation plan
-- Privacy-first storage: anonymized history; notes opt-in; Firebase optional with localStorage fallback
-- Campus admin: severity mix, peak hours/weekdays, CSV — no PII
-- Production habits: Zod, rate limits, 24h cache, Vitest + Playwright, GitHub Actions
+### Resume bullets (copy-paste)
+- Built **CalmPath** (Next.js, TypeScript): **multi-step check-in wizard** with live severity preview and Zod-validated inputs
+- Integrated **Google Gemini** for structured 7-day plans; responses parsed with **Zod** (`PlanSchema`); **safety guardrail** skips the model on high-risk check-ins
+- Shipped deterministic **severity scoring** with on-screen reasons before/after the LLM step
+- Optional **Firebase** auth/history + campus admin charts; **Vitest**, Playwright, and GitHub Actions CI
 
 ### Architecture
 
@@ -30,7 +28,7 @@ flowchart LR
   Store --> Admin[Admin charts]
 ```
 
-Full write-up: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+Docs (optional): [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/CASE_STUDY.md`](docs/CASE_STUDY.md)
 
 ### Tech stack
 

@@ -164,7 +164,7 @@ export default function DashboardPage() {
               }
             }}
           >
-            Reset demo data
+            Clear local history
           </Button>
         ) : null}
       </Card>
