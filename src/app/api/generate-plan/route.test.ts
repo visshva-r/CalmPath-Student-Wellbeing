@@ -43,6 +43,28 @@ describe("POST /api/generate-plan", () => {
     expect(generateContent).not.toHaveBeenCalled();
   });
 
+  it("keeps the safety path available when Gemini is not configured", async () => {
+    delete process.env.GEMINI_API_KEY;
+    const { POST } = await import("@/app/api/generate-plan/route");
+    const res = await POST(request(sampleCheckIn({ unsafeThoughts: true }), "198.51.100.11"));
+    const json = (await res.json()) as { source?: string };
+
+    expect(res.status).toBe(200);
+    expect(json.source).toBe("safety");
+    expect(generateContent).not.toHaveBeenCalled();
+  });
+
+  it("returns an explicit configuration error for normal check-ins without Gemini", async () => {
+    delete process.env.GEMINI_API_KEY;
+    const { POST } = await import("@/app/api/generate-plan/route");
+    const res = await POST(request(sampleCheckIn(), "198.51.100.12"));
+    const json = (await res.json()) as { code?: string; error?: string };
+
+    expect(res.status).toBe(503);
+    expect(json.code).toBe("GEMINI_NOT_CONFIGURED");
+    expect(json.error).toMatch(/not configured/i);
+  });
+
   it("validates Gemini JSON on the normal path", async () => {
     generateContent.mockResolvedValue({
       response: { text: () => JSON.stringify(samplePlan) },

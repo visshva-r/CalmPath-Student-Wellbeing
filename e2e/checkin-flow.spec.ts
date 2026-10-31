@@ -22,3 +22,13 @@ test("check-in to results renders a safety plan", async ({ page }) => {
   await expect(page.getByText(/7-day follow-up checklist/i)).toBeVisible();
   await expect(page.getByText(/Message a friend/i)).toBeVisible();
 });
+
+test("direct results visits recover with a start check-in action", async ({ page }) => {
+  await page.goto("/results");
+  await expect(page.getByRole("heading", { name: /Your CalmPath plan/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Start with a check-in/i })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Start check-in/i })).toHaveAttribute(
+    "href",
+    "/checkin",
+  );
+});

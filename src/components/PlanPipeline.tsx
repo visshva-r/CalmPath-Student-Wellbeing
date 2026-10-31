@@ -20,7 +20,7 @@ export function PlanPipeline({
           ? "Gemini plan (cached)"
           : "Gemini plan"
         : source === "fallback"
-          ? "Offline fallback"
+          ? "Local fallback"
           : "Plan";
 
   const planDetail =
@@ -29,7 +29,7 @@ export function PlanPipeline({
       : source === "gemini"
         ? "Response validated with Zod"
         : source === "fallback"
-          ? "Used when the API is unavailable"
+        ? "Used when Gemini is unavailable"
           : "";
 
   const steps = [

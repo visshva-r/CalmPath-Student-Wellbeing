@@ -54,6 +54,7 @@ Docs (optional): [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/CASE_S
 - Prompt versioned in `src/lib/prompts/calmPathPlan.ts` (`PROMPT_VERSION`)
 - High-risk check-ins skip Gemini and return a fixed safety plan
 - Plans are normalized (trim/dedupe) and identical check-ins are cached for 24h
+- If `GEMINI_API_KEY` is missing or Gemini is unavailable, normal check-ins show a clearly labeled local fallback plan; high-risk check-ins always use the fixed safety plan without calling Gemini
 
 ## Run locally
 1) Install deps
@@ -83,6 +84,8 @@ npm run dev
 ```
 
 Open `http://localhost:3000`
+
+If `GEMINI_API_KEY` is not set, the app still runs: normal check-ins use the local fallback plan and the results page explains that Gemini is unavailable. The high-risk safety path remains available and never calls Gemini.
 
 ## Tests
 
@@ -128,7 +131,7 @@ Publish `firestore.rules` from this repo if you enable Firebase. The app does no
 ## Deploy (Vercel)
 1) Push this repo to GitHub (public)  
 2) Import to Vercel  
-3) Add `GEMINI_API_KEY` (and Firebase `NEXT_PUBLIC_*` vars if used)  
+3) Add `GEMINI_API_KEY` (and Firebase `NEXT_PUBLIC_*` vars if used). If the key is omitted, the deployed app remains usable with the clearly labeled local fallback plan.
 4) Deploy
 
 Live: https://calm-path-student-wellbeing.vercel.app/  

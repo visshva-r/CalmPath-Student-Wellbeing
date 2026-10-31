@@ -39,7 +39,7 @@ export function highRiskPlan(reason: string): Plan {
 export function fallbackPlan(): Plan {
   return {
     severityReasoning:
-      "We couldn’t generate a Gemini plan right now, so here’s a safe fallback plan.",
+      "Gemini is unavailable for this deployment, so here’s a safe local fallback plan.",
     immediateActions: [
       "Take 10 slow breaths (4 in, 6 out).",
       "Write down the next smallest task (2 minutes).",

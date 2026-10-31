@@ -84,17 +84,6 @@ export async function POST(req: Request) {
   }
 
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    console.info("[generate-plan]", { event: "missing_api_key", promptVersion: PROMPT_VERSION });
-    return jsonResponse(
-      {
-        error:
-          "Missing GEMINI_API_KEY. Add it to .env.local and your Vercel project env vars.",
-      },
-      500,
-      limitHeaders,
-    );
-  }
 
   let body: unknown;
   try {
@@ -152,6 +141,18 @@ export async function POST(req: Request) {
         cached: false,
       },
       200,
+      limitHeaders,
+    );
+  }
+
+  if (!apiKey) {
+    console.info("[generate-plan]", { event: "missing_api_key", promptVersion: PROMPT_VERSION });
+    return jsonResponse(
+      {
+        code: "GEMINI_NOT_CONFIGURED",
+        error: "Gemini is not configured for this deployment. CalmPath will show a local fallback plan.",
+      },
+      503,
       limitHeaders,
     );
   }

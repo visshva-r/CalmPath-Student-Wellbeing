@@ -32,7 +32,7 @@ type ApiResponse =
       promptVersion?: string;
       cached?: boolean;
     }
-  | { error: string };
+  | { code?: string; error: string };
 
 export default function ResultsPage() {
   const [loading, setLoading] = useState(true);
@@ -110,7 +110,9 @@ export default function ResultsPage() {
           nextPlan = fallbackPlan();
           if (!cancelled) {
             setError(
-              e instanceof Error ? e.message : "Failed to generate plan. Try again.",
+              e instanceof Error
+                ? e.message
+                : "Gemini is unavailable. Showing a local fallback plan.",
             );
           }
         }
@@ -221,7 +223,16 @@ export default function ResultsPage() {
         </p>
       ) : null}
 
-      {loading || !plan ? (
+      {!loading && !plan ? (
+        <Card title="Start with a check-in">
+          <p className="text-sm leading-6 text-quiet">
+            Your plan is created from a completed check-in. Nothing was lost.
+          </p>
+          <ButtonLink href="/checkin" className="mt-4">
+            Start check-in
+          </ButtonLink>
+        </Card>
+      ) : loading || !plan ? (
         <Card>
           <p className="text-sm text-quiet">
             Scoring check-in, then generating your plan…

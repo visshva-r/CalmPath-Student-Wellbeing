@@ -13,7 +13,7 @@ export function PlanBadge({
           ? "AI-generated (cached)"
           : "AI-generated"
         : source === "fallback"
-          ? "Offline fallback plan"
+          ? "Local fallback plan"
           : null;
   if (!label) return null;
   const tone =
